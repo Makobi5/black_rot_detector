@@ -23,7 +23,7 @@ class CabbageHealthApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Cabbage Health Scanner',
+      title: 'Cabbage Health Tracker',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.green,
@@ -83,119 +83,252 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  Future<void> validateAndAnalyzeImage(File imageFile) async {
-    setState(() {
-      _isLoading = true;
-    });
+Future<void> validateAndAnalyzeImage(File imageFile) async {
+  setState(() {
+    _isLoading = true;
+    _errorMessage = ""; // Clear any previous error messages
+  });
 
-    try {
-      // First, validate that the image contains cabbage
-      final validationResult = await validateCabbageImage(imageFile);
-      
-      if (validationResult.isValid) {
-        // If valid, proceed to analyze for black rot
-        await analyzeImageForBlackRot(imageFile);
-      } else {
-        setState(() {
-          _isLoading = false;
-          _predictionMade = true;
-          _isCabbageImage = false;
-          _errorMessage = validationResult.message;
-        });
-      }
-    } catch (e) {
-      print("Error processing image: $e");
-      setState(() {
-        _isLoading = false;
-        _predictionMade = true;
-        _isCabbageImage = false;
-        _errorMessage = "An error occurred while processing the image. Please try again.";
-      });
-    }
-  }
-
-  Future<ValidationResult> validateCabbageImage(File imageFile) async {
-    try {
-      // Convert image to base64
-      final bytes = await imageFile.readAsBytes();
-      final base64Image = base64Encode(bytes);
-      
-      // Prepare the request payload for validation
-      final payload = {
-        "contents": [
-          {
-            "parts": [
-              {
-                "text": "This is an image validation task. Answer only YES or NO: Does this image contain cabbage plants or leaves? If no, briefly explain what is shown instead. Keep your response short and direct."
-              },
-              {
-                "inline_data": {
-                  "mime_type": "image/jpeg",
-                  "data": base64Image
-                }
-              }
-            ]
-          }
-        ],
-        "generationConfig": {
-          "temperature": 0.2,
-          "topK": 32,
-          "topP": 1,
-          "maxOutputTokens": 1024,
-        }
-      };
-
-      // Send request to Gemini API
-      final response = await http.post(
-        Uri.parse('$geminiEndpoint?key=$apiKey'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode(payload),
-      );
-
-      if (response.statusCode == 200) {
-        final jsonResponse = jsonDecode(response.body);
-        final generatedContent = jsonResponse['candidates'][0]['content']['parts'][0]['text'];
-        
-        // Check if the response indicates a valid cabbage image
-        if (generatedContent.trim().toLowerCase().startsWith('yes')) {
-          return ValidationResult(true, "");
-        } else {
-          // Extract explanation if available
-          String explanation = generatedContent.replaceAll(RegExp(r'^no[.:,\s]*', caseSensitive: false), '').trim();
-          if (explanation.isEmpty) {
-            explanation = "This doesn't appear to be a cabbage plant image.";
-          }
-          return ValidationResult(false, "Invalid image: $explanation Please take a clear photo of cabbage plants or leaves.");
-        }
-      } else {
-        print("API Error during validation: ${response.statusCode} - ${response.body}");
-        return ValidationResult(false, "Couldn't validate the image. Please try again.");
-      }
-    } catch (e) {
-      print("Error validating image: $e");
-      return ValidationResult(false, "Error validating the image. Please try again.");
-    }
-  }
-
-Future<void> analyzeImageForBlackRot(File imageFile) async {
   try {
+    // Skip the validation step and go directly to analysis
+    // This is the key change - we're removing the separate validation step
+    await analyzeImageForBlackRot(imageFile);
+  } catch (e) {
+    print("Error processing image: $e");
+    setState(() {
+      _isLoading = false;
+      _predictionMade = true;
+      _isCabbageImage = false;
+      _errorMessage = "An error occurred while processing the image. Please try again.";
+    });
+  }
+}
+Widget _buildAnalysisResults() {
+  // Choose colors based on disease status
+  final Color statusColor = _diseaseType == "Healthy" 
+      ? Colors.green 
+      : Colors.red;
+  
+  final Color bgColor = _diseaseType == "Healthy" 
+      ? Colors.green[50]! 
+      : Colors.red[50]!;
+  
+  final Color textColor = _diseaseType == "Healthy" 
+      ? Colors.green[700]! 
+      : Colors.red[700]!;
+  
+  final IconData statusIcon = _diseaseType == "Healthy" 
+      ? Icons.check_circle 
+      : Icons.warning;
+
+  // Create the severity indicator (not shown for healthy plants)
+  Widget severityIndicator = _diseaseType == "Healthy" 
+      ? Container() 
+      : Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(height: 16),
+            Text(
+              "Disease Severity:",
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            SizedBox(height: 8),
+            LinearProgressIndicator(
+              value: _diseaseSeverity / 100,
+              backgroundColor: Colors.grey[200],
+              valueColor: AlwaysStoppedAnimation<Color>(
+                _diseaseSeverity < 30 
+                    ? Colors.amber 
+                    : (_diseaseSeverity < 70 ? Colors.orange : Colors.red),
+              ),
+              minHeight: 10,
+            ),
+            SizedBox(height: 4),
+            Text(
+              "${_diseaseSeverity.toStringAsFixed(0)}%",
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: _diseaseSeverity < 30 
+                    ? Colors.amber[700] 
+                    : (_diseaseSeverity < 70 ? Colors.orange[700] : Colors.red[700]),
+              ),
+            ),
+          ],
+        );
+
+  return Container(
+    width: double.infinity,
+    padding: EdgeInsets.all(16),
+    margin: EdgeInsets.symmetric(vertical: 16),
+    decoration: BoxDecoration(
+      color: bgColor,
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: statusColor.withOpacity(0.3)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Status header
+        Row(
+          children: [
+            Icon(statusIcon, color: statusColor, size: 24),
+            SizedBox(width: 8),
+            Text(
+              _diseaseType == "Healthy" ? "Healthy Cabbage" : "Detected: $_diseaseType",
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: textColor,
+              ),
+            ),
+          ],
+        ),
+        
+        // Severity indicator (only for diseased plants)
+        severityIndicator,
+        
+        // Symptoms
+        SizedBox(height: 16),
+        Text(
+          "Assessment:",
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        SizedBox(height: 4),
+        Text(
+          _analysisDetails,
+          style: TextStyle(
+            fontSize: 15,
+            color: Colors.grey[800],
+          ),
+        ),
+        
+        // Recommendations
+        SizedBox(height: 16),
+        Text(
+          "Recommendations:",
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        SizedBox(height: 8),
+        ..._recommendations.map((rec) => Padding(
+          padding: EdgeInsets.only(bottom: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.arrow_right, size: 20, color: Colors.grey[700]),
+              SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  rec,
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: Colors.grey[800],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        )),
+      ],
+    ),
+  );
+}
+
+Widget _buildResultsSection() {
+  if (_isLoading) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text(
+            "Analyzing image...",
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey[700],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  if (!_predictionMade) {
+    return Container(); // Empty container if no prediction yet
+  }
+  
+  if (!_isCabbageImage && _errorMessage.isNotEmpty) {
+    // Show error message if it's not a cabbage image or there's another error
+    return _buildErrorMessage();
+  } else {
+    // Show the analysis results
+    return _buildAnalysisResults();
+  }
+}
+
+Widget _buildErrorMessage() {
+  return Container(
+    width: double.infinity,
+    padding: EdgeInsets.all(16),
+    margin: EdgeInsets.symmetric(vertical: 16),
+    decoration: BoxDecoration(
+      color: Colors.red[50],
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: Colors.red[200]!),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.red),
+            SizedBox(width: 8),
+            Text(
+              "No cabbage image detected, please take an image of a cabbage and try again",
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.red[700],
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: 8),
+        Text(
+          _errorMessage,
+          style: TextStyle(
+            fontSize: 16,
+            color: Colors.red[800],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<ValidationResult> validateCabbageImage(File imageFile) async {
+  try {
+    // Convert image to base64
     final bytes = await imageFile.readAsBytes();
     final base64Image = base64Encode(bytes);
     
+    // Improved prompt to validate if this is a cabbage plant
     final payload = {
       "contents": [
         {
           "parts": [
             {
-              "text": "Analyze this cabbage image for black rot disease. Provide a JSON response with these exact keys: "
-                  "\n1. 'is_healthy' (boolean)"
-                  "\n2. 'disease_name' (string or null)"
-                  "\n3. 'confidence' (number 0-100)"
-                  "\n4. 'key_symptoms' (array of 3 strings max)"
-                  "\n5. 'treatment_plan' (array of 5 strings max)"
-                  "\nReturn ONLY valid JSON with no additional text."
+              "text": "Is this a clear image of a cabbage plant or cabbage leaves? Answer with only 'Yes' if it's clearly a cabbage plant or cabbage leaves, or 'No' followed by a brief explanation if it's not. Don't describe the plant's condition yet."
             },
             {
               "inline_data": {
@@ -207,74 +340,288 @@ Future<void> analyzeImageForBlackRot(File imageFile) async {
         }
       ],
       "generationConfig": {
-        "temperature": 0.2,  // Lower for more deterministic responses
-        "maxOutputTokens": 300,
+        "temperature": 0.1,
+        "topK": 32,
+        "topP": 1,
+        "maxOutputTokens": 512,
       }
     };
 
+    // Send request to Gemini API
     final response = await http.post(
       Uri.parse('$geminiEndpoint?key=$apiKey'),
-      headers: {'Content-Type': 'application/json'},
+      headers: {
+        'Content-Type': 'application/json',
+      },
       body: jsonEncode(payload),
     );
 
     if (response.statusCode == 200) {
       final jsonResponse = jsonDecode(response.body);
-      final content = jsonResponse['candidates'][0]['content']['parts'][0]['text'];
-      final result = jsonDecode(content);
+      final generatedContent = jsonResponse['candidates'][0]['content']['parts'][0]['text'];
+      
+      // Check if the response indicates a valid cabbage image
+      if (generatedContent.trim().toLowerCase().startsWith('yes')) {
+        return ValidationResult(true, "");
+      } else {
+        // Extract explanation if available
+        String explanation = generatedContent.replaceAll(RegExp(r'^no[.:,\s]*', caseSensitive: false), '').trim();
+        if (explanation.isEmpty) {
+          explanation = "This doesn't appear to be a cabbage plant image.";
+        }
+        return ValidationResult(false, "No cabbage detected: $explanation Please take a clear photo of cabbage plants or leaves.");
+      }
+    } else {
+      print("API Error during validation: ${response.statusCode} - ${response.body}");
+      return ValidationResult(false, "Couldn't validate the image. Please try again.");
+    }
+  } catch (e) {
+    print("Error validating image: $e");
+    return ValidationResult(false, "Error validating the image. Please try again.");
+  }
+}
 
+Future<void> analyzeImageForBlackRot(File imageFile) async {
+  try {
+    // First validate if this is a cabbage image
+    final validationResult = await validateCabbageImage(imageFile);
+    if (!validationResult.isValid) {
+      setState(() {
+        _isLoading = false;
+        _predictionMade = true;
+        _isCabbageImage = false;
+        _diseaseType = "No Cabbage Detected";
+        _diseaseSeverity = 0.0;
+        _analysisDetails = validationResult.message;
+        _recommendations = [
+          "**Take a clear photo:** Ensure the cabbage plant is clearly visible in the frame.",
+          "**Use good lighting:** Take photos in natural daylight for best results.",
+          "**Get close enough:** Make sure leaves and any symptoms are clearly visible.",
+          "**Include multiple angles:** If concerned about disease, take photos of different parts of the plant.",
+          "**Try again:** Use the Camera button to take a new photo, or Gallery to select an existing image."
+        ];
+        _errorMessage = "";
+      });
+      return;
+    }
+    
+    // Convert image to base64
+    final bytes = await imageFile.readAsBytes();
+    final base64Image = base64Encode(bytes);
+    
+    // Improved prompt with better detection of healthy vs. diseased cabbage
+    final payload = {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "Analyze this cabbage plant image specifically for black rot disease (Xanthomonas campestris). Follow these exact instructions:\n\n1. PRIMARY FOCUS: You are a black rot detection system, but you must also accurately identify healthy cabbages.\n\n2. If the cabbage appears completely HEALTHY with no symptoms of disease:\n   - The cabbage should look uniform in color (typically green or purple) with no lesions\n   - Leaf edges should be smooth and intact with no yellowing or V-shaped lesions\n   - There should be no blackened veins or wilting\n   - Output 'STATUS: HEALTHY'\n   - Output 'SEVERITY: 0%'\n\n3. If there are CLEAR symptoms of BLACK ROT:\n   - Yellow/brown V-shaped lesions at leaf margins\n   - Blackened veins\n   - Wilting or leaf drop\n   - Output 'STATUS: DETECTED: Black Rot'\n   - Output 'SEVERITY: [40-100]%' based on visible damage\n\n4. VERY IMPORTANT: Do NOT classify healthy cabbages as having black rot. A healthy cabbage with normal variations in color, slight irregularities, or minor imperfections is still HEALTHY.\n\nThis is a critical plant health monitoring system. False positives (claiming disease when plants are healthy) are just as problematic as false negatives."
+            },
+            {
+              "inline_data": {
+                "mime_type": "image/jpeg",
+                "data": base64Image
+              }
+            }
+          ]
+        }
+      ],
+      "generationConfig": {
+        "temperature": 0.1, // Lower temperature for more consistent responses
+        "topK": 32,
+        "topP": 1,
+        "maxOutputTokens": 2048,
+      }
+    };
+
+    // Send request to Gemini API
+    final response = await http.post(
+      Uri.parse('$geminiEndpoint?key=$apiKey'),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode(payload),
+    );
+
+    if (response.statusCode == 200) {
+      final jsonResponse = jsonDecode(response.body);
+      final generatedContent = jsonResponse['candidates'][0]['content']['parts'][0]['text'];
+      
+      // Log the raw response for debugging
+      print("Raw Gemini response: $generatedContent");
+      
+      // Parse the structured response
+      String status = '';
+      double severity = 0.0;
+      String symptoms = '';
+      List<String> recommendations = [];
+      
+      // First, determine if the response indicates a healthy plant
+      bool isHealthy = generatedContent.toUpperCase().contains('HEALTHY') && 
+                      !generatedContent.toLowerCase().contains('not healthy');
+      
+      // Extract status
+      final statusMatch = RegExp(r'STATUS:\s*(.*?)(?:\n|$)', caseSensitive: false).firstMatch(generatedContent);
+      if (statusMatch != null) {
+        status = statusMatch.group(1)!.trim();
+      } else if (isHealthy) {
+        status = "HEALTHY";
+      } else if (generatedContent.toUpperCase().contains('BLACK ROT')) {
+        status = "DETECTED: Black Rot";
+      }
+      
+      // Extract severity
+      final severityMatch = RegExp(r'SEVERITY:\s*(\d+)%', caseSensitive: false).firstMatch(generatedContent);
+      if (severityMatch != null) {
+        severity = double.parse(severityMatch.group(1)!).clamp(0, 100);
+      } else if (isHealthy) {
+        severity = 0.0;
+      } else if (status.toUpperCase().contains('BLACK ROT')) {
+        // Default severity for black rot if not specified
+        severity = 65.0;
+      }
+      
+      // Extract symptoms/analysis
+      final symptomsMatch = RegExp(r'SYMPTOMS:\s*(.*?)(?=\n\n|\n[A-Z]|$)', multiLine: true, dotAll: true, caseSensitive: false).firstMatch(generatedContent);
+      if (symptomsMatch != null) {
+        symptoms = symptomsMatch.group(1)!.trim();
+      } else {
+        // Try to extract symptoms from any descriptive text
+        final lines = generatedContent.split('\n');
+        for (final line in lines) {
+          if (line.toLowerCase().contains('leaf') || 
+              line.toLowerCase().contains('appear') || 
+              line.toLowerCase().contains('look') || 
+              line.toLowerCase().contains('plant')) {
+            symptoms += line.trim() + " ";
+          }
+        }
+      }
+      
+      // If symptoms is still empty, provide default descriptions
+      if (symptoms.trim().isEmpty) {
+        if (status.toUpperCase().contains('BLACK ROT')) {
+          symptoms = "The cabbage leaves show symptoms consistent with black rot infection, including irregular edges, discoloration, and potential V-shaped lesions at leaf margins.";
+        } else if (status.toUpperCase().contains('HEALTHY')) {
+          symptoms = "The cabbage appears healthy with uniform color, intact leaf edges, and no visible disease symptoms.";
+        } else {
+          symptoms = "The plant requires further inspection to determine its health status.";
+        }
+      }
+      
+      // Ensure symptoms don't contradict the status
+      if (status.toUpperCase().contains('HEALTHY') && 
+          (symptoms.toLowerCase().contains('disease') || 
+           symptoms.toLowerCase().contains('infection') ||
+           symptoms.toLowerCase().contains('black rot'))) {
+        symptoms = "The cabbage appears healthy with uniform coloration, intact leaf structure, and no visible signs of disease.";
+      }
+      
+      if (status.toUpperCase().contains('BLACK ROT') && 
+          (symptoms.toLowerCase().contains('no disease') || 
+           symptoms.toLowerCase().contains('healthy') ||
+           symptoms.toLowerCase().contains('no sign'))) {
+        symptoms = "The cabbage leaves show subtle signs consistent with early black rot infection, including slight irregularities at leaf margins and potential early discoloration.";
+      }
+      
+      // Get appropriate recommendations based on the diagnosis
+      String diseaseType = extractDiseaseType(status);
+      recommendations = getRecommendationsForCondition(diseaseType, severity);
+      
       setState(() {
         _isLoading = false;
         _predictionMade = true;
         _isCabbageImage = true;
-        
-        if (result['is_healthy'] == true) {
-          _diseaseType = "Healthy";
-          _diseaseSeverity = 0;
-          _analysisDetails = "No signs of disease detected";
-          _recommendations = [
-            "Continue regular monitoring",
-            "Maintain proper plant spacing",
-            "Water at the base of plants",
-            "Practice crop rotation",
-            "Inspect weekly for early signs"
-          ];
-        } else {
-          _diseaseType = result['disease_name'] ?? "Unknown Disease";
-          _diseaseSeverity = (result['confidence'] ?? 0).toDouble();
-          _analysisDetails = (result['key_symptoms'] as List).join('\n• ');
-          _recommendations = List<String>.from(result['treatment_plan']);
-        }
+        _diseaseSeverity = severity;
+        _diseaseType = diseaseType;
+        _analysisDetails = symptoms.trim();
+        _recommendations = recommendations;
+        _errorMessage = ""; // Clear any error messages
       });
+      
     } else {
-      throw Exception('API request failed');
+      print("API Error: ${response.statusCode} - ${response.body}");
+      setState(() {
+        _isLoading = false;
+        _predictionMade = true;
+        _isCabbageImage = false;
+        _errorMessage = "Unable to analyze the cabbage plant. Please try again.";
+      });
     }
+    
   } catch (e) {
+    print("Error analyzing image: $e");
     setState(() {
       _isLoading = false;
       _predictionMade = true;
-      _errorMessage = "Analysis failed. Please try again.";
+      _isCabbageImage = false;
+      _errorMessage = "Error analyzing the image. Please try again.";
     });
   }
 }
 
-// Simplified recommendation generator (fallback)
-List<String> _getFallbackRecommendations(bool isHealthy) {
-  return isHealthy
-      ? [
-          "Maintain current care routine",
-          "Monitor for early symptoms",
-          "Ensure proper soil drainage",
-          "Remove weeds regularly",
-          "Use balanced fertilizer"
-        ]
-      : [
-          "Isolate affected plants",
-          "Remove severely infected leaves",
-          "Apply recommended fungicide",
-          "Avoid overhead watering",
-          "Sterilize tools after use"
-        ];
+// Helper function to extract clean disease type from status
+String extractDiseaseType(String status) {
+  if (status.toUpperCase().contains('HEALTHY')) {
+    return "Healthy";
+  } else if (status.toUpperCase().contains('BLACK ROT')) {
+    return "Black Rot";
+  } else if (status.toUpperCase().contains('INSECT')) {
+    return "Insect Damage";
+  } else {
+    // Extract other disease name if present
+    final match = RegExp(r'DETECTED:\s*(.*)', caseSensitive: false).firstMatch(status);
+    if (match != null && match.group(1)!.trim().isNotEmpty) {
+      return match.group(1)!.trim();
+    }
+    return "Unknown Issue";
+  }
+}
+
+List<String> getRecommendationsForCondition(String diseaseType, double severity) {
+  if (diseaseType == "No Cabbage Detected") {
+    return [
+      "Take a clear photo: Ensure the cabbage plant is clearly visible in the frame.",
+      "Use good lighting: Take photos in natural daylight for best results.",
+      "Get close enough: Make sure leaves and any symptoms are clearly visible.",
+      "Include multiple angles: If concerned about disease, take photos of different parts of the plant.",
+      "Try again: Use the Camera button to take a new photo, or Gallery to select an existing image."
+    ];
+  } else if (diseaseType.toLowerCase().contains('black rot')) {
+    final recommendations = [
+      "Remove infected leaves: Carefully remove and destroy all infected plant parts to prevent spread.",
+      "Improve air circulation: Ensure adequate spacing between plants to reduce humidity.",
+      "Avoid overhead watering: Water at soil level to keep foliage dry.",
+      "Apply copper fungicide: Use copper-based products approved for organic gardening.",
+      "Practice crop rotation: Don't plant cabbage or related crops in the same area for 3 years."
+    ];
+    
+    // Add severity-specific recommendations
+    if (severity > 70) {
+      recommendations.add("Consider removal: Severely infected plants should be completely removed and destroyed.");
+    } else if (severity > 40) {
+      recommendations.add("Isolate plants: Keep infected plants separated from healthy ones to limit spread.");
+    }
+    
+    return recommendations;
+  } else if (diseaseType.toLowerCase() == "healthy") {
+    return [
+      "Continue monitoring: Regular inspection keeps plants healthy.",
+      "Maintain soil health: Add compost or organic matter to soil.",
+      "Water consistently: Keep soil evenly moist but not waterlogged.",
+      "Practice crop rotation: Prevents disease buildup in soil.",
+      "Mulch appropriately: Helps maintain soil moisture and reduce weed competition."
+    ];
+  } else {
+    // Generic recommendations for other issues
+    return [
+      "Identify specific issue: Consult local extension service for accurate diagnosis.",
+      "Improve growing conditions: Ensure proper sunlight, water, and nutrients.",
+      "Remove affected parts: Prune and dispose of damaged leaves and stems.",
+      "Apply appropriate treatments: Based on specific diagnosis.",
+      "Monitor closely: Check plants regularly for signs of improvement or decline."
+    ];
+  }
 }
 
   Widget buildResultCard() {
@@ -299,7 +646,7 @@ List<String> _getFallbackRecommendations(bool isHealthy) {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Invalid Image',
+                      'Not a cabbage image,Take or select a photo of cabbage plants or leaves',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
@@ -440,7 +787,7 @@ List<String> _getFallbackRecommendations(bool isHealthy) {
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          'Cabbage Health Scanner',
+          'Cabbage Health Tracker',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
@@ -468,7 +815,7 @@ List<String> _getFallbackRecommendations(bool isHealthy) {
                             CircularProgressIndicator(),
                             SizedBox(height: 16),
                             Text(
-                              'Analyzing for diseases...',
+                              'Analyzing for Blackrot disease...',
                               textAlign: TextAlign.center,
                               style: TextStyle(fontSize: 16),
                             ),
@@ -554,7 +901,7 @@ List<String> _getFallbackRecommendations(bool isHealthy) {
                       Icon(Icons.auto_awesome, color: Colors.blue.shade700),
                       const SizedBox(width: 8),
                       Text(
-                        'AI-Powered Disease Detection',
+                        'Black rot Detector',
                         style: TextStyle(
                           color: Colors.blue.shade700,
                           fontWeight: FontWeight.w500,
