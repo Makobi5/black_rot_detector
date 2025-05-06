@@ -4,15 +4,80 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:camera/camera.dart';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'auth_screens.dart'; // Make sure to import your auth screens
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 // Replace with your actual Gemini API key
 const String apiKey = 'AIzaSyBU0nYJ79vuTX5CbJReS43Ygz96l_zrpgs'; 
 const String geminiEndpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent';
+class SupabaseCredentials {
+  static final SupabaseClient client = Supabase.instance.client;
 
+  static Future<void> initialize() async {
+    await Supabase.initialize(
+      url: 'https://xayqdixeownbkwapasss.supabase.co',
+      anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhheXFkaXhlb3duYmt3YXBhc3NzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY0NTY0MDEsImV4cCI6MjA2MjAzMjQwMX0.kLt1Z-WXIUQix3W9jdBJDFQla9dUZzMkMC82DZAFeb4',
+    );
+  }
+}
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final cameras = await availableCameras();
-  runApp(CabbageHealthApp(cameras: cameras));
+await SupabaseCredentials.initialize();
+
+
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Cabbage Health Tracker',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        primarySwatch: Colors.green,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
+        brightness: Brightness.light,
+        fontFamily: 'Poppins',
+      ),
+      darkTheme: ThemeData(
+        primarySwatch: Colors.green,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
+        brightness: Brightness.dark,
+        fontFamily: 'Poppins',
+      ),
+      themeMode: ThemeMode.system,
+      home: const AuthWrapper(),
+    );
+  }
+}
+
+class AuthWrapper extends StatelessWidget {
+  const AuthWrapper({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<AuthState>(
+      stream: Supabase.instance.client.auth.onAuthStateChange,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final session = snapshot.data?.session;
+        if (session != null) {
+          return const HomeScreen();
+        }
+        return const LoginScreen();
+      },
+    );
+  }
 }
 
 class CabbageHealthApp extends StatelessWidget {
@@ -38,10 +103,207 @@ class CabbageHealthApp extends StatelessWidget {
         fontFamily: 'Poppins',
       ),
       themeMode: ThemeMode.system,
-      home: HomePage(cameras: cameras),
+      home: FutureBuilder<List<CameraDescription>>(
+        future: availableCameras(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+          return HomePage(cameras: snapshot.data ?? []);
+        },
+      ),
     );
   }
 }
+class LoginSignupScreen extends StatefulWidget {
+  final VoidCallback onLogin;
+
+  const LoginSignupScreen({Key? key, required this.onLogin}) : super(key: key);
+
+  @override
+  _LoginSignupScreenState createState() => _LoginSignupScreenState();
+}
+
+class _LoginSignupScreenState extends State<LoginSignupScreen> {
+  bool _isLogin = true;
+  final _formKey = GlobalKey<FormState>();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _nameController = TextEditingController();
+  bool _isLoading = false;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      if (_isLogin) {
+        // Login
+        final response = await SupabaseCredentials.client.auth.signInWithPassword(
+          email: _emailController.text,
+          password: _passwordController.text,
+        );
+      } else {
+        // Sign up
+        final response = await SupabaseCredentials.client.auth.signUp(
+          email: _emailController.text,
+          password: _passwordController.text,
+          data: {
+            'name': _nameController.text,
+          },
+        );
+        
+        // Insert user data into public.users table
+        await SupabaseCredentials.client.from('users').insert({
+          'id': response.user!.id,
+          'email': _emailController.text,
+          'name': _nameController.text,
+        });
+      }
+      
+      widget.onLogin();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: ${e.toString()}')),
+      );
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  void _switchAuthMode() {
+    setState(() {
+      _isLogin = !_isLogin;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            children: [
+              const SizedBox(height: 80),
+              Image.asset(
+                'assets/seedscan_logo.png',
+                height: 120,
+              ),
+              const SizedBox(height: 40),
+              Text(
+                _isLogin ? 'Welcome Back' : 'Create Account',
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 20),
+              Form(
+                key: _formKey,
+                child: Column(
+                  children: [
+                    if (!_isLogin)
+                      TextFormField(
+                        controller: _nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Full Name',
+                          prefixIcon: Icon(Icons.person)),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Please enter your name';
+                          }
+                          return null;
+                        },
+                      ),
+                    const SizedBox(height: 15),
+                    TextFormField(
+                      controller: _emailController,
+                      decoration: const InputDecoration(
+                        labelText: 'Email',
+                        prefixIcon: Icon(Icons.email),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please enter your email';
+                        }
+                        if (!value.contains('@')) {
+                          return 'Please enter a valid email';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 15),
+                    TextFormField(
+                      controller: _passwordController,
+                      decoration: const InputDecoration(
+                        labelText: 'Password',
+                        prefixIcon: Icon(Icons.lock)),
+                      obscureText: true,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please enter your password';
+                        }
+                        if (value.length < 6) {
+                          return 'Password must be at least 6 characters';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 25),
+                    if (_isLoading)
+                      const CircularProgressIndicator()
+                    else
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: _submit, // This calls your submit method
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 15),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          child: Text(
+                            _isLogin ? 'Login' : 'Sign Up',
+                            style: const TextStyle(fontSize: 16),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 15),
+                    TextButton(
+                      onPressed: _switchAuthMode,
+                      child: Text(
+                        _isLogin 
+                            ? 'Don\'t have an account? Sign Up'
+                            : 'Already have an account? Login',
+                        style: TextStyle(
+                          color: Theme.of(context).primaryColor,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 
 class HomePage extends StatefulWidget {
   final List<CameraDescription> cameras;
