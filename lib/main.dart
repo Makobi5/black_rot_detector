@@ -330,7 +330,23 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
   }
-
+  Future<void> _signOut() async {
+    try {
+      await Supabase.instance.client.auth.signOut();
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const AuthWrapper()),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error signing out: ${e.toString()}')),
+        );
+      }
+    }
+  }
   Future pickImage(ImageSource source) async {
     final pickedFile = await picker.pickImage(source: source);
 
@@ -1054,6 +1070,12 @@ List<String> getRecommendationsForCondition(String diseaseType, double severity)
         ),
         centerTitle: true,
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _signOut,
+          ),
+        ],
       ),
       body: Container(
         padding: const EdgeInsets.all(16.0),
