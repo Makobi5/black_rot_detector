@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'main.dart'; 
+import 'package:flutter/foundation.dart' show kIsWeb;
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
 
@@ -160,7 +161,6 @@ class SignupScreen extends StatefulWidget {
   @override
   _SignupScreenState createState() => _SignupScreenState();
 }
-
 class _SignupScreenState extends State<SignupScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
@@ -179,32 +179,83 @@ class _SignupScreenState extends State<SignupScreen> {
     });
 
     try {
+      String emailRedirectURL = 'rootspotapp://login-callback/'; // Default for mobile
+      if (kIsWeb) {
+        // Ensure this matches a whitelisted Redirect URL in your Supabase dashboard
+        // Using http://localhost:3000 is fine if your app handles the root path for auth.
+        // Or, you can use http://localhost:3000/auth/callback if you prefer a specific callback path.
+        // Make sure the chosen URL is in your Supabase "Redirect URLs" list.
+        emailRedirectURL = 'http://localhost:3000';
+      }
+
       final response = await Supabase.instance.client.auth.signUp(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
         data: {
           'name': _nameController.text.trim(),
         },
+        emailRedirectTo: emailRedirectURL, // Use the platform-specific URL
       );
 
-      if (response.user != null) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const HomeScreen()),
-        );
+      // Show success message even if email confirmation is required
+      // The actual navigation to HomeScreen will happen after email verification
+      // and the AuthWrapper detects the new session.
+      if (response.user != null || response.session != null) { // Check for user or session
+        // Check if email confirmation is required
+        bool emailConfirmationRequired = response.user?.emailConfirmedAt == null;
+
+        if (mounted) { // Check if the widget is still in the tree
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Text(emailConfirmationRequired ? 'Verify Your Email' : 'Signup Successful'),
+              content: Text(emailConfirmationRequired
+                  ? 'A confirmation email has been sent. Please check your inbox and verify your email address to log in.'
+                  : 'You have successfully signed up! Please log in.'),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context); // Close the dialog
+                    // Always redirect to LoginScreen after signup prompt,
+                    // as user needs to verify email or login.
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (context) => const LoginScreen()),
+                    );
+                  },
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+        }
+      } else {
+        // This case might indicate an issue if no user and no session is returned
+        // without an AuthException being thrown.
+         if (mounted) {
+           setState(() {
+            _errorMessage = 'Signup did not complete successfully. Please try again.';
+          });
+         }
       }
     } on AuthException catch (e) {
-      setState(() {
-        _errorMessage = e.message;
-      });
+      if (mounted) {
+        setState(() {
+          _errorMessage = e.message;
+        });
+      }
     } catch (e) {
-      setState(() {
-        _errorMessage = 'An unexpected error occurred';
-      });
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'An unexpected error occurred: ${e.toString()}';
+        });
+      }
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -344,7 +395,6 @@ class _SignupScreenState extends State<SignupScreen> {
     );
   }
 }
-
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
 
@@ -362,22 +412,26 @@ class _HomeScreenState extends State<HomeScreen> {
     _userData = _fetchUserData();
   }
 
-Future<Map<String, dynamic>?> _fetchUserData() async {
-  final userId = _supabase.auth.currentUser?.id;
-  if (userId == null) return null;
+  Future<Map<String, dynamic>?> _fetchUserData() async {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null) return null;
 
-  try {
-    final data = await _supabase
-        .from('users')
-        .select()
-        .eq('id', userId)
-        .single();
-    
-    return data as Map<String, dynamic>?;
-  } on PostgrestException catch (e) {
-    throw Exception('Failed to fetch user data: ${e.message}');
+    try {
+      final data = await _supabase
+          .from('users')
+          .select()
+          .eq('id', userId)
+          .single();
+      
+      return data as Map<String, dynamic>?;
+    } on PostgrestException catch (e) {
+      throw Exception('Failed to fetch user data: ${e.message}');
+    }
   }
-}
+
+  String _getFirstName(String fullName) {
+    return fullName.split(' ').first;
+  }
 
   Future<void> _logout() async {
     await _supabase.auth.signOut();
@@ -412,6 +466,9 @@ Future<Map<String, dynamic>?> _fetchUserData() async {
 
           final user = snapshot.data;
           final email = _supabase.auth.currentUser?.email ?? 'No email';
+          final userName = user?['name'] ?? 'User';
+          final firstName = _getFirstName(userName);
+          final isEmailConfirmed = _supabase.auth.currentUser?.emailConfirmedAt != null;
 
           return Padding(
             padding: const EdgeInsets.all(16.0),
@@ -419,15 +476,138 @@ Future<Map<String, dynamic>?> _fetchUserData() async {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Welcome, ${user?['name'] ?? 'User'}',
+                  'Welcome, $firstName!',
                   style: const TextStyle(
-                    fontSize: 24,
+                    fontSize: 28,
                     fontWeight: FontWeight.bold,
+                    color: Colors.green,
                   ),
                 ),
                 const SizedBox(height: 8),
-                Text('Email: $email'),
-                const SizedBox(height: 32),
+                Row(
+                  children: [
+                    const Icon(Icons.email, size: 16, color: Colors.grey),
+                    const SizedBox(width: 8),
+                    Text(
+                      email,
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                    const SizedBox(width: 8),
+                    if (!isEmailConfirmed)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.orange[50],
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Text(
+                          'Unverified',
+                          style: TextStyle(
+                            color: Colors.orange,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                Card(
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      children: [
+                        ListTile(
+                          leading: const Icon(Icons.account_circle, color: Colors.green),
+                          title: const Text('Account Information'),
+                          subtitle: Text('View and update your profile'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
+                            // Navigate to profile screen
+                          },
+                        ),
+                        const Divider(),
+                        ListTile(
+                          leading: const Icon(Icons.history, color: Colors.green),
+                          title: const Text('Scan History'),
+                          subtitle: const Text('View your previous scans'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
+                            // Navigate to history screen
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                if (!isEmailConfirmed)
+                  Card(
+                    color: Colors.orange[50],
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(color: Colors.orange[100]!),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Verify your email',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.orange,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Please check your inbox for a verification email to complete your registration.',
+                            style: TextStyle(color: Colors.orange),
+                          ),
+                          const SizedBox(height: 16),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                side: BorderSide(color: Colors.orange),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                              onPressed: () async {
+                                // Resend verification email
+                                try {
+                                  await _supabase.auth.resend(
+                                    type: OtpType.signup,
+                                    email: email,
+                                  );
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Verification email resent!'),
+                                    ),
+                                  );
+                                } catch (e) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Error: ${e.toString()}'),
+                                    ),
+                                  );
+                                }
+                              },
+                              child: const Text(
+                                'Resend Verification Email',
+                                style: TextStyle(color: Colors.orange),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 24),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
@@ -446,8 +626,12 @@ Future<Map<String, dynamic>?> _fetchUserData() async {
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),
+                      backgroundColor: Colors.green,
                     ),
-                    child: const Text('Go to Cabbage Health Tracker'),
+                    child: const Text(
+                      'Go to Cabbage Health Tracker',
+                      style: TextStyle(fontSize: 16),
+                    ),
                   ),
                 ),
               ],
