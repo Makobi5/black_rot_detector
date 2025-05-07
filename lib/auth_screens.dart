@@ -170,94 +170,56 @@ class _SignupScreenState extends State<SignupScreen> {
   bool _isLoading = false;
   String _errorMessage = '';
 
-  Future<void> _signup() async {
-    if (!_formKey.currentState!.validate()) return;
+Future<void> _signup() async {
+  if (!_formKey.currentState!.validate()) return;
 
-    setState(() {
-      _isLoading = true;
-      _errorMessage = '';
-    });
+  setState(() {
+    _isLoading = true;
+    _errorMessage = '';
+  });
 
-    try {
-      String emailRedirectURL = 'rootspotapp://login-callback/'; // Default for mobile
-      if (kIsWeb) {
-        // Ensure this matches a whitelisted Redirect URL in your Supabase dashboard
-        // Using http://localhost:3000 is fine if your app handles the root path for auth.
-        // Or, you can use http://localhost:3000/auth/callback if you prefer a specific callback path.
-        // Make sure the chosen URL is in your Supabase "Redirect URLs" list.
-        emailRedirectURL = 'http://localhost:3000';
-      }
+  try {
+    String emailRedirectURL = 'rootspotapp://login-callback/';
+    if (kIsWeb) {
+      emailRedirectURL = 'http://localhost:3000';
+    }
 
-      final response = await Supabase.instance.client.auth.signUp(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
-        data: {
-          'name': _nameController.text.trim(),
-        },
-        emailRedirectTo: emailRedirectURL, // Use the platform-specific URL
+    final response = await Supabase.instance.client.auth.signUp(
+      email: _emailController.text.trim(),
+      password: _passwordController.text.trim(),
+      data: {
+        'name': _nameController.text.trim(),
+      },
+      emailRedirectTo: emailRedirectURL,
+    );
+
+    // Directly navigate to login screen after signup
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
       );
-
-      // Show success message even if email confirmation is required
-      // The actual navigation to HomeScreen will happen after email verification
-      // and the AuthWrapper detects the new session.
-      if (response.user != null || response.session != null) { // Check for user or session
-        // Check if email confirmation is required
-        bool emailConfirmationRequired = response.user?.emailConfirmedAt == null;
-
-        if (mounted) { // Check if the widget is still in the tree
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: Text(emailConfirmationRequired ? 'Verify Your Email' : 'Signup Successful'),
-              content: Text(emailConfirmationRequired
-                  ? 'A confirmation email has been sent. Please check your inbox and verify your email address to log in.'
-                  : 'You have successfully signed up! Please log in.'),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(context); // Close the dialog
-                    // Always redirect to LoginScreen after signup prompt,
-                    // as user needs to verify email or login.
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (context) => const LoginScreen()),
-                    );
-                  },
-                  child: const Text('OK'),
-                ),
-              ],
-            ),
-          );
-        }
-      } else {
-        // This case might indicate an issue if no user and no session is returned
-        // without an AuthException being thrown.
-         if (mounted) {
-           setState(() {
-            _errorMessage = 'Signup did not complete successfully. Please try again.';
-          });
-         }
-      }
-    } on AuthException catch (e) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = e.message;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'An unexpected error occurred: ${e.toString()}';
-        });
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+    }
+  } on AuthException catch (e) {
+    if (mounted) {
+      setState(() {
+        _errorMessage = e.message;
+      });
+    }
+  } catch (e) {
+    if (mounted) {
+      setState(() {
+        _errorMessage = 'An unexpected error occurred: ${e.toString()}';
+      });
+    }
+  } finally {
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
+}
 
   @override
   void dispose() {
@@ -511,21 +473,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: const TextStyle(color: Colors.grey),
                     ),
                     const SizedBox(width: 8),
-                    if (!isEmailConfirmed)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.orange[50],
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Text(
-                          'Unverified',
-                          style: TextStyle(
-                            color: Colors.orange,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
+                    
                   ],
                 ),
                 const SizedBox(height: 24),
@@ -562,69 +510,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(height: 24),
-                if (!isEmailConfirmed)
-                  Card(
-                    color: Colors.orange[50],
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: BorderSide(color: Colors.orange[100]!),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Verify your email',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.orange,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Please check your inbox for a verification email to complete your registration.',
-                            style: TextStyle(color: Colors.orange),
-                          ),
-                          const SizedBox(height: 16),
-                          SizedBox(
-                            width: double.infinity,
-                            child: OutlinedButton(
-                              style: OutlinedButton.styleFrom(
-                                side: BorderSide(color: Colors.orange),
-                                padding: const EdgeInsets.symmetric(vertical: 12),
-                              ),
-                              onPressed: () async {
-                                // Resend verification email
-                                try {
-                                  await _supabase.auth.resend(
-                                    type: OtpType.signup,
-                                    email: email,
-                                  );
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Verification email resent!'),
-                                    ),
-                                  );
-                                } catch (e) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Error: ${e.toString()}'),
-                                    ),
-                                  );
-                                }
-                              },
-                              child: const Text(
-                                'Resend Verification Email',
-                                style: TextStyle(color: Colors.orange),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+               
                 const SizedBox(height: 24),
                 SizedBox(
                   width: double.infinity,
